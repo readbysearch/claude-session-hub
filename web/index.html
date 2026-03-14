@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Session Hub</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #d2a8ff;
+    --accent-dim: #8957e5;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --orange: #d29922;
+    --red: #f85149;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  /* Header */
+  .header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .search-box {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: var(--text);
+    font-size: 14px;
+    width: 280px;
+    outline: none;
+  }
+  .search-box:focus { border-color: var(--accent-dim); }
+  .search-box::placeholder { color: var(--text-muted); }
+  .machine-count {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* Main content */
+  .content { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+  /* Machine group */
+  .machine-group {
+    margin-bottom: 32px;
+  }
+  .machine-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .machine-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+  }
+  .machine-dot.stale { background: var(--text-muted); }
+  .machine-name {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .machine-os {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+  .machine-seen {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* Project */
+  .project {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .project-header {
+    padding: 12px 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .project-header:hover { background: var(--bg-tertiary); }
+  .project-toggle {
+    color: var(--text-muted);
+    font-size: 12px;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .project-toggle.open { transform: rotate(90deg); }
+  .project-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .project-path {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 400px;
+  }
+  .project-meta {
+    margin-left: auto;
+    display: flex;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+  }
+
+  /* Sessions list */
+  .sessions-list {
+    border-top: 1px solid var(--border);
+    display: none;
+  }
+  .sessions-list.open { display: block; }
+  .session-row {
+    padding: 10px 16px 10px 40px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 13px;
+  }
+  .session-row:last-child { border-bottom: none; }
+  .session-row:hover { background: var(--bg-tertiary); }
+  .session-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session-title .untitled { color: var(--text-muted); font-style: italic; }
+  .session-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .session-time {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 90px;
+    text-align: right;
+  }
+
+  /* Session detail modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 10;
+  }
+  .modal-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .modal-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .modal-close:hover { background: var(--bg-tertiary); color: var(--text); }
+  .modal-body { padding: 16px 20px; }
+
+  /* Messages */
+  .message {
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .message.human {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--blue);
+  }
+  .message.assistant {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--accent);
+  }
+  .message.tool_use, .message.tool_result {
+    background: var(--bg);
+    border-left: 3px solid var(--orange);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .message.system {
+    background: var(--bg);
+    border-left: 3px solid var(--text-muted);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .msg-role {
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .msg-role .tool-badge {
+    font-weight: 400;
+    color: var(--orange);
+  }
+  .msg-role .ts {
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-left: auto;
+  }
+
+  /* Loading / empty states */
+  .loading, .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+  }
+  .loading::after {
+    content: '';
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Search results */
+  .search-results {
+    display: none;
+  }
+  .search-results.active { display: block; }
+  .search-result {
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .search-result:hover { background: var(--bg-tertiary); }
+  .search-result-title { font-weight: 600; font-size: 14px; }
+  .search-result-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="7" height="7" rx="1"/>
+      <rect x="14" y="3" width="7" height="7" rx="1"/>
+      <rect x="3" y="14" width="7" height="7" rx="1"/>
+      <rect x="14" y="14" width="7" height="7" rx="1"/>
+    </svg>
+    Claude Session Hub
+  </h1>
+  <div class="header-right">
+    <input type="text" class="search-box" id="searchInput" placeholder="Search sessions... (Enter to search)">
+    <span class="machine-count" id="machineCount"></span>
+  </div>
+</div>
+
+<div class="content">
+  <div id="loading" class="loading">Loading timeline</div>
+  <div id="timeline"></div>
+  <div id="searchResults" class="search-results"></div>
+  <div id="emptyState" class="empty" style="display:none">
+    No sessions uploaded yet. Start the daemon on your machines to begin.
+  </div>
+</div>
+
+<!-- Session detail modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalTitle">Session</h2>
+        <div class="modal-meta" id="modalMeta"></div>
+      </div>
+      <button class="modal-close" id="modalClose">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+const API = '';  // Same origin
+
+// --- Helpers ---
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+  return d.toLocaleDateString();
+}
+
+function formatTime(dateStr) {
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleString();
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function truncate(text, maxLen = 120) {
+  if (!text) return '';
+  return text.length > maxLen ? text.slice(0, maxLen) + '...' : text;
+}
+
+// --- Render timeline ---
+async function loadTimeline() {
+  const loadingEl = document.getElementById('loading');
+  const timelineEl = document.getElementById('timeline');
+  const emptyEl = document.getElementById('emptyState');
+  const countEl = document.getElementById('machineCount');
+
+  try {
+    const resp = await fetch(`${API}/api/timeline`);
+    const data = await resp.json();
+    loadingEl.style.display = 'none';
+
+    if (!data.length) {
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    const totalSessions = data.reduce(
+      (sum, m) => sum + m.projects.reduce((s, p) => s + p.session_count, 0), 0
+    );
+    countEl.textContent = `${data.length} machine${data.length > 1 ? 's' : ''} · ${totalSessions} sessions`;
+
+    timelineEl.innerHTML = data.map(machine => `
+      <div class="machine-group">
+        <div class="machine-header">
+          <div class="machine-dot ${isStale(machine.machine.last_seen_at) ? 'stale' : ''}"></div>
+          <span class="machine-name">${escapeHtml(machine.machine.name)}</span>
+          ${machine.machine.os ? `<span class="machine-os">${escapeHtml(machine.machine.os)}</span>` : ''}
+          <span class="machine-seen">last seen ${timeAgo(machine.machine.last_seen_at)}</span>
+        </div>
+        ${machine.projects.map(project => renderProject(project)).join('')}
+      </div>
+    `).join('');
+
+    // Attach toggle listeners
+    timelineEl.querySelectorAll('.project-header').forEach(el => {
+      el.addEventListener('click', () => {
+        const list = el.nextElementSibling;
+        const toggle = el.querySelector('.project-toggle');
+        list.classList.toggle('open');
+        toggle.classList.toggle('open');
+      });
+    });
+
+    // Attach session click listeners
+    timelineEl.querySelectorAll('.session-row').forEach(el => {
+      el.addEventListener('click', () => {
+        openSession(parseInt(el.dataset.sessionId));
+      });
+    });
+
+  } catch (err) {
+    loadingEl.textContent = 'Failed to load timeline: ' + err.message;
+    console.error(err);
+  }
+}
+
+function isStale(lastSeen) {
+  if (!lastSeen) return true;
+  return (Date.now() - new Date(lastSeen).getTime()) > 300000; // 5 minutes
+}
+
+function renderProject(project) {
+  return `
+    <div class="project">
+      <div class="project-header">
+        <span class="project-toggle">▶</span>
+        <span class="project-name">${escapeHtml(project.display_name || '(unnamed)')}</span>
+        <span class="project-path" title="${escapeHtml(project.original_path)}">${escapeHtml(project.original_path)}</span>
+        <div class="project-meta">
+          <span class="badge">${project.session_count} session${project.session_count !== 1 ? 's' : ''}</span>
+          <span class="badge">${timeAgo(project.last_activity_at)}</span>
+        </div>
+      </div>
+      <div class="sessions-list">
+        ${project.sessions.map(s => `
+          <div class="session-row" data-session-id="${s.id}">
+            <span class="session-title">${s.title ? escapeHtml(truncate(s.title, 80)) : '<span class="untitled">Untitled session</span>'}</span>
+            <span class="session-count">${s.message_count} turns</span>
+            <span class="session-time">${timeAgo(s.last_activity_at)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// --- Session detail modal ---
+async function openSession(sessionId) {
+  const overlay = document.getElementById('modalOverlay');
+  const body = document.getElementById('modalBody');
+  const title = document.getElementById('modalTitle');
+  const meta = document.getElementById('modalMeta');
+
+  overlay.classList.add('open');
+  body.innerHTML = '<div class="loading">Loading session</div>';
+  title.textContent = 'Loading...';
+  meta.textContent = '';
+
+  try {
+    const resp = await fetch(`${API}/api/sessions/${sessionId}`);
+    const session = await resp.json();
+
+    title.textContent = session.title || 'Untitled session';
+    meta.innerHTML = `
+      ${escapeHtml(session.machine_name)} · ${escapeHtml(session.project_path)}<br>
+      ${session.message_count} messages ·
+      ${formatTime(session.started_at)} — ${formatTime(session.last_activity_at)}
+    `;
+
+    body.innerHTML = session.messages.map(renderMessage).join('');
+
+  } catch (err) {
+    body.innerHTML = `<div class="empty">Failed to load session: ${err.message}</div>`;
+  }
+}
+
+function renderMessage(msg) {
+  const role = msg.role || msg.msg_type || 'unknown';
+  const roleClass = ['human', 'user'].includes(role) ? 'human'
+    : role === 'assistant' ? 'assistant'
+    : ['tool_use', 'tool_result'].includes(role) ? role
+    : 'system';
+
+  const displayRole = role === 'user' ? 'human' : role;
+  const toolBadge = msg.tool_name ? `<span class="tool-badge">${escapeHtml(msg.tool_name)}</span>` : '';
+  const ts = msg.timestamp ? `<span class="ts">${formatTime(msg.timestamp)}</span>` : '';
+
+  let content = msg.content_text || '';
+  // For tool messages with no extracted text, show a summary
+  if (!content && ['tool_use', 'tool_result'].includes(role)) {
+    content = JSON.stringify(msg.raw_json, null, 2).slice(0, 500);
+  }
+  if (!content) content = '(no text content)';
+
+  return `
+    <div class="message ${roleClass}">
+      <div class="msg-role">${escapeHtml(displayRole)} ${toolBadge} ${ts}</div>
+      ${escapeHtml(truncate(content, 2000))}
+    </div>
+  `;
+}
+
+// Close modal
+document.getElementById('modalClose').addEventListener('click', () => {
+  document.getElementById('modalOverlay').classList.remove('open');
+});
+document.getElementById('modalOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) {
+    e.currentTarget.classList.remove('open');
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.getElementById('modalOverlay').classList.remove('open');
+  }
+});
+
+// --- Search ---
+let searchTimeout;
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('searchResults');
+const timelineEl2 = document.getElementById('timeline');
+
+searchInput.addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    const q = searchInput.value.trim();
+    if (!q) {
+      searchResults.classList.remove('active');
+      searchResults.innerHTML = '';
+      timelineEl2.style.display = 'block';
+      return;
+    }
+    try {
+      const resp = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
+      const results = await resp.json();
+      timelineEl2.style.display = 'none';
+      searchResults.classList.add('active');
+
+      if (!results.length) {
+        searchResults.innerHTML = '<div class="empty">No results found</div>';
+        return;
+      }
+
+      searchResults.innerHTML = results.map(r => `
+        <div class="search-result" onclick="openSession(${r.session_id})">
+          <div class="search-result-title">${escapeHtml(r.title || 'Untitled')}</div>
+          <div class="search-result-meta">
+            ${escapeHtml(r.machine_name)} · ${escapeHtml(r.project_name || r.project_path)} ·
+            ${r.message_count} messages · ${timeAgo(r.last_activity_at)}
+          </div>
+        </div>
+      `).join('');
+    } catch (err) {
+      searchResults.innerHTML = `<div class="empty">Search failed: ${err.message}</div>`;
+    }
+  }
+});
+
+// Clear search when input is emptied
+searchInput.addEventListener('input', () => {
+  if (!searchInput.value.trim()) {
+    searchResults.classList.remove('active');
+    searchResults.innerHTML = '';
+    timelineEl2.style.display = 'block';
+  }
+});
+
+// --- Init ---
+loadTimeline();
+// Refresh every 30 seconds
+setInterval(loadTimeline, 30000);
+</script>
+</body>
+</html>

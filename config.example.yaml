@@ -1,0 +1,9 @@
+server_url: http://YOUR_SERVER_IP:8000
+api_key: YOUR_API_KEY_HERE
+
+# Auto-detected if empty:
+# claude_projects_dir: ~/.claude/projects
+
+batch_size: 200
+debounce_seconds: 3.0
+log_level: INFO
