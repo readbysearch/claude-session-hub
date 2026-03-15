@@ -27,34 +27,39 @@ A read-only upload & browse system for Claude Code sessions across multiple mach
 ### 1. Start the server (cloud machine)
 
 ```bash
-cd server
-cp .env.example .env        # Edit with your DB credentials
-docker-compose up -d         # Starts PostgreSQL + FastAPI
+cp .env.example .env         # Edit with your DB credentials and ADMIN_KEY
+docker compose up -d         # Starts PostgreSQL + FastAPI
 ```
 
-Generate an API key for each machine:
+Create a user and register machines:
 ```bash
+# Create a web UI user
+curl -X POST http://your-server:8000/api/users/create \
+  -H "Authorization: Bearer YOUR_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "yourname", "password": "yourpassword"}'
+
+# Register a machine to get a daemon API key
 curl -X POST http://your-server:8000/api/machines/register \
   -H "Authorization: Bearer YOUR_ADMIN_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name": "windows-desktop", "os": "windows"}'
+  -d '{"name": "my-laptop", "os": "macos"}'
 # Returns: {"machine_id": 1, "api_key": "csh_abc123..."}
 ```
 
 ### 2. Start the daemon (each machine)
 
 ```bash
-cd daemon
-pip install -r requirements.txt
+pip install pyyaml watchdog requests
 cp config.example.yaml config.yaml   # Edit with server URL + API key
 python watcher.py
 ```
 
-Or install as a systemd service (Linux) / Windows Service.
+Or install as a systemd service (Linux) / LaunchAgent (macOS).
 
 ### 3. Browse sessions
 
-Open `http://your-server:8000` in a browser.
+Open `http://your-server:8000` in a browser. HTTP Basic Auth will prompt for your username and password.
 
 ## Database Schema
 
@@ -75,23 +80,19 @@ last_seen_at    created_at          last_activity_at      timestamp
 
 ```
 claude-session-hub/
-├── README.md
-├── docker-compose.yml
-├── server/
-│   ├── requirements.txt
-│   ├── main.py              # FastAPI app + routes
-│   ├── database.py          # SQLAlchemy engine + session
-│   ├── models.py            # ORM models
-│   ├── schemas.py           # Pydantic request/response schemas
-│   ├── auth.py              # API key middleware
-│   ├── ingest.py            # JSONL parsing + DB insert logic
-│   └── .env.example
-├── daemon/
-│   ├── requirements.txt
-│   ├── config.example.yaml
-│   ├── watcher.py           # Main daemon entry point
-│   ├── parser.py            # JSONL line parser
-│   └── uploader.py          # HTTP upload client
+├── Dockerfile               # Server container image
+├── docker-compose.yml       # PostgreSQL + FastAPI orchestration
+├── requirements.txt         # Server Python dependencies
+├── main.py                  # FastAPI app + routes
+├── database.py              # SQLAlchemy engine + session
+├── models.py                # ORM models (User, Machine, Project, Session, Message)
+├── schemas.py               # Pydantic request/response schemas
+├── auth.py                  # HTTP Basic Auth + API key middleware
+├── ingest.py                # JSONL parsing + DB upsert logic
+├── watcher.py               # Daemon: file watcher entry point
+├── parser.py                # Daemon: JSONL line parser
+├── uploader.py              # Daemon: HTTP upload client
+├── config.example.yaml      # Daemon config template
 └── web/
     └── index.html           # Single-page timeline UI
 ```
