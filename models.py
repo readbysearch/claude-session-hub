@@ -6,6 +6,17 @@ from sqlalchemy.orm import relationship
 from database import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(128), unique=True, nullable=False)
+    password_hash = Column(String(256), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    machines = relationship("Machine", back_populates="owner", lazy="selectin")
+
+
 class Machine(Base):
     __tablename__ = "machines"
 
@@ -13,9 +24,11 @@ class Machine(Base):
     name = Column(String(128), unique=True, nullable=False)
     os = Column(String(32), nullable=True)  # "windows", "linux", "macos"
     api_key_hash = Column(String(256), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_seen_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    owner = relationship("User", back_populates="machines")
     projects = relationship("Project", back_populates="machine", lazy="selectin")
 
 

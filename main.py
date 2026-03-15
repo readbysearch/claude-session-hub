@@ -2,32 +2,36 @@
 Claude Session Hub — FastAPI server.
 
 Endpoints:
+  POST /api/users/create          — Admin: create a user
   POST /api/machines/register     — Admin: register a new machine, get API key
   POST /api/upload                — Daemon: upload JSONL lines for a session
-  GET  /api/timeline              — Web UI: get recent sessions grouped by machine+project
-  GET  /api/sessions/{id}         — Web UI: get full session with messages
-  GET  /api/machines              — Web UI: list all machines
+  GET  /api/timeline              — Web UI (basic auth): recent sessions
+  GET  /api/sessions/{id}         — Web UI (basic auth): session detail
+  GET  /api/machines              — Web UI (basic auth): list machines
+  GET  /api/search                — Web UI (basic auth): search sessions
   GET  /                          — Serve the web UI
 """
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import get_db, init_db
-from models import Machine, Project, Session, Message
+from models import User, Machine, Project, Session, Message
 from schemas import (
     MachineRegisterRequest, MachineRegisterResponse, MachineInfo,
     UploadPayload, SessionSummary, ProjectSummary, MachineTimeline,
     SessionDetail, MessageDetail,
 )
-from auth import generate_api_key, hash_api_key, require_admin, require_machine
+from auth import (
+    generate_api_key, hash_api_key, require_admin, require_machine,
+    require_basic_auth, hash_password,
+)
 from ingest import ingest_lines
 
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +54,37 @@ app = FastAPI(
 
 
 # ---------------------------------------------------------------------------
+# Admin: create user
+# ---------------------------------------------------------------------------
+
+@app.post("/api/users/create")
+async def create_user(
+    request: Request,
+    _admin: str = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = await db.execute(select(User).where(User.username == username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"User '{username}' already exists")
+
+    user = User(username=username, password_hash=hash_password(password))
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"Created user: {username} (id={user.id})")
+    return {"user_id": user.id, "username": username}
+
+
+# ---------------------------------------------------------------------------
 # Admin: machine registration
 # ---------------------------------------------------------------------------
 
@@ -59,7 +94,6 @@ async def register_machine(
     _admin: str = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    # Check for duplicate name
     existing = await db.execute(select(Machine).where(Machine.name == req.name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Machine '{req.name}' already registered")
@@ -107,16 +141,16 @@ async def upload_lines(
 
 
 # ---------------------------------------------------------------------------
-# Web UI API: timeline
+# Web UI API: timeline (basic auth)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/timeline", response_model=list[MachineTimeline])
 async def get_timeline(
     days: int = Query(default=7, ge=1, le=90),
+    _user: str = Depends(require_basic_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """Return recent sessions grouped by machine → project."""
-    # Fetch all machines with their projects and sessions
     machines_result = await db.execute(
         select(Machine).order_by(Machine.name)
     )
@@ -164,7 +198,6 @@ async def get_timeline(
                 ],
             ))
 
-        # Sort projects by most recent activity
         project_summaries.sort(
             key=lambda p: p.last_activity_at or "1970-01-01",
             reverse=True,
@@ -185,12 +218,13 @@ async def get_timeline(
 
 
 # ---------------------------------------------------------------------------
-# Web UI API: session detail
+# Web UI API: session detail (basic auth)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/sessions/{session_id}", response_model=SessionDetail)
 async def get_session_detail(
     session_id: int,
+    _user: str = Depends(require_basic_auth),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -202,7 +236,6 @@ async def get_session_detail(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get project and machine info
     project_result = await db.execute(select(Project).where(Project.id == session.project_id))
     project = project_result.scalar_one()
     machine_result = await db.execute(select(Machine).where(Machine.id == project.machine_id))
@@ -235,11 +268,14 @@ async def get_session_detail(
 
 
 # ---------------------------------------------------------------------------
-# Web UI API: list machines
+# Web UI API: list machines (basic auth)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/machines", response_model=list[MachineInfo])
-async def list_machines(db: AsyncSession = Depends(get_db)):
+async def list_machines(
+    _user: str = Depends(require_basic_auth),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(Machine).order_by(Machine.name))
     machines = result.scalars().all()
     return [
@@ -251,19 +287,19 @@ async def list_machines(db: AsyncSession = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# Web UI API: search sessions
+# Web UI API: search sessions (basic auth)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/search")
 async def search_sessions(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=50, ge=1, le=200),
+    _user: str = Depends(require_basic_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """Basic text search across message content and session titles."""
     pattern = f"%{q}%"
 
-    # Search in session titles
     title_results = await db.execute(
         select(Session)
         .where(Session.title.ilike(pattern))
@@ -272,7 +308,6 @@ async def search_sessions(
     )
     title_sessions = title_results.scalars().all()
 
-    # Search in message content
     msg_results = await db.execute(
         select(Message.session_id)
         .where(Message.content_text.ilike(pattern))
@@ -293,7 +328,6 @@ async def search_sessions(
     )
     sessions = sessions_result.scalars().all()
 
-    # Enrich with project/machine names
     results = []
     for s in sessions:
         proj_result = await db.execute(select(Project).where(Project.id == s.project_id))

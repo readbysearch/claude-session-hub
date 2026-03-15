@@ -530,25 +530,102 @@ async function openSession(sessionId) {
 
 function renderMessage(msg) {
   const role = msg.role || msg.msg_type || 'unknown';
-  const roleClass = ['human', 'user'].includes(role) ? 'human'
-    : role === 'assistant' ? 'assistant'
-    : ['tool_use', 'tool_result'].includes(role) ? role
-    : 'system';
-
-  const displayRole = role === 'user' ? 'human' : role;
-  const toolBadge = msg.tool_name ? `<span class="tool-badge">${escapeHtml(msg.tool_name)}</span>` : '';
+  const raw = msg.raw_json || {};
   const ts = msg.timestamp ? `<span class="ts">${formatTime(msg.timestamp)}</span>` : '';
 
-  let content = msg.content_text || '';
-  // For tool messages with no extracted text, show a summary
-  if (!content && ['tool_use', 'tool_result'].includes(role)) {
-    content = JSON.stringify(msg.raw_json, null, 2).slice(0, 500);
-  }
-  if (!content) content = '(no text content)';
+  // Skip non-visible message types
+  if (['file-history-snapshot', 'last-prompt', 'system'].includes(role)) return '';
 
+  // Progress messages are tool results
+  if (role === 'progress') {
+    const data = raw.data || {};
+    const toolName = data.tool_name || raw.parentToolUseID || 'tool';
+    let content = '';
+    if (data.content) {
+      if (typeof data.content === 'string') {
+        content = data.content;
+      } else if (Array.isArray(data.content)) {
+        content = data.content
+          .filter(b => b && typeof b === 'object' && b.text)
+          .map(b => b.text)
+          .join('\n') || JSON.stringify(data.content, null, 2).slice(0, 1000);
+      }
+    }
+    if (!content) content = JSON.stringify(data, null, 2).slice(0, 1000);
+    return `
+      <div class="message tool_result">
+        <div class="msg-role">tool result <span class="tool-badge">${escapeHtml(String(toolName))}</span> ${ts}</div>
+        ${escapeHtml(truncate(content, 2000))}
+      </div>
+    `;
+  }
+
+  // User messages
+  if (['human', 'user'].includes(role)) {
+    const content = msg.content_text || '(no text content)';
+    return `
+      <div class="message human">
+        <div class="msg-role">human ${ts}</div>
+        ${escapeHtml(truncate(content, 2000))}
+      </div>
+    `;
+  }
+
+  // Assistant messages — may contain text blocks and tool_use blocks interleaved
+  if (role === 'assistant') {
+    const message = raw.message || {};
+    const contentBlocks = message.content;
+    const parts = [];
+
+    if (Array.isArray(contentBlocks)) {
+      for (const block of contentBlocks) {
+        if (!block || typeof block !== 'object') continue;
+        if (block.type === 'text' && block.text) {
+          parts.push(`
+            <div class="message assistant">
+              <div class="msg-role">assistant ${ts}</div>
+              ${escapeHtml(truncate(block.text, 2000))}
+            </div>
+          `);
+        } else if (block.type === 'tool_use') {
+          const input = block.input || {};
+          let inputDisplay = '';
+          // For common tools, show the most useful field
+          if (input.command) inputDisplay = input.command;
+          else if (input.file_path) inputDisplay = input.file_path + (input.pattern ? ': ' + input.pattern : '');
+          else if (input.pattern) inputDisplay = input.pattern;
+          else if (input.prompt) inputDisplay = truncate(input.prompt, 200);
+          else inputDisplay = JSON.stringify(input, null, 2).slice(0, 500);
+
+          parts.push(`
+            <div class="message tool_use">
+              <div class="msg-role">tool use <span class="tool-badge">${escapeHtml(block.name || 'unknown')}</span> ${ts}</div>
+              ${escapeHtml(truncate(inputDisplay, 2000))}
+            </div>
+          `);
+        }
+      }
+    }
+
+    // Fallback if no blocks parsed
+    if (parts.length === 0) {
+      const content = msg.content_text || '(no text content)';
+      parts.push(`
+        <div class="message assistant">
+          <div class="msg-role">assistant ${ts}</div>
+          ${escapeHtml(truncate(content, 2000))}
+        </div>
+      `);
+    }
+
+    return parts.join('');
+  }
+
+  // Fallback for other types
+  const content = msg.content_text || JSON.stringify(raw, null, 2).slice(0, 500);
   return `
-    <div class="message ${roleClass}">
-      <div class="msg-role">${escapeHtml(displayRole)} ${toolBadge} ${ts}</div>
+    <div class="message system">
+      <div class="msg-role">${escapeHtml(role)} ${ts}</div>
       ${escapeHtml(truncate(content, 2000))}
     </div>
   `;

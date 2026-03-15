@@ -24,6 +24,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://csh_user:${POSTGRES_PASSWORD:-changeme}@db:5432/claude_session_hub
       ADMIN_KEY: ${ADMIN_KEY:-admin_changeme_please}
+      JWT_SECRET: ${JWT_SECRET:-csh_jwt_secret_changeme}
     ports:
       - "8000:8000"
     depends_on:
