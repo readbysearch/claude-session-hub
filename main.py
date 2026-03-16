@@ -13,6 +13,7 @@ Endpoints:
 """
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
@@ -199,7 +200,7 @@ async def get_timeline(
             ))
 
         project_summaries.sort(
-            key=lambda p: p.last_activity_at or "1970-01-01",
+            key=lambda p: p.last_activity_at or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
 

@@ -61,6 +61,40 @@ Or install as a systemd service (Linux) / LaunchAgent (macOS).
 
 Open `http://your-server:8000` in a browser. HTTP Basic Auth will prompt for your username and password.
 
+## CLI (agent-friendly interface)
+
+The `csh` CLI provides compact, token-efficient output for Claude Code or other agents.
+
+### Setup
+
+```bash
+pip install click requests pyyaml
+python cli.py config          # Prompts for server URL, username, password
+```
+
+Credentials are saved to `~/.claude-session-hub/cli.yaml`.
+
+### Commands
+
+```bash
+# Recent sessions grouped by machine/project (default: last 7 days)
+python cli.py timeline [--days 14] [--json]
+
+# Search sessions by content or title
+python cli.py search "docker" [--json]
+
+# Full session detail
+python cli.py show 42 [--json]
+
+# Condensed view — human/assistant text only, truncated to 200 chars
+python cli.py show 42 --summary
+
+# List connected machines
+python cli.py machines [--json]
+```
+
+All commands support `--json` for raw JSON output (useful for piping to `jq` or LLM context).
+
 ## Database Schema
 
 ```
@@ -83,6 +117,7 @@ claude-session-hub/
 ├── Dockerfile               # Server container image
 ├── docker-compose.yml       # PostgreSQL + FastAPI orchestration
 ├── requirements.txt         # Server Python dependencies
+├── cli.py                   # CLI tool (csh) for querying sessions
 ├── main.py                  # FastAPI app + routes
 ├── database.py              # SQLAlchemy engine + session
 ├── models.py                # ORM models (User, Machine, Project, Session, Message)
