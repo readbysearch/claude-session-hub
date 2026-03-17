@@ -108,5 +108,8 @@ class SessionDetail(BaseModel):
     last_activity_at: datetime | None = None
     message_count: int = 0
     messages: list[MessageDetail] = []
+    total_messages: int = 0
+    offset: int = 0
+    limit: int | None = None
 
     model_config = {"from_attributes": True}

@@ -260,14 +260,12 @@ async def get_timeline(
 @app.get("/api/sessions/{session_id}", response_model=SessionDetail)
 async def get_session_detail(
     session_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=500),
     _user: str = Depends(require_basic_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Session)
-        .options(selectinload(Session.messages))
-        .where(Session.id == session_id)
-    )
+    result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -277,7 +275,23 @@ async def get_session_detail(
     machine_result = await db.execute(select(Machine).where(Machine.id == project.machine_id))
     machine = machine_result.scalar_one()
 
-    messages = sorted(session.messages, key=lambda m: m.line_number)
+    # Total message count (for pagination metadata)
+    count_result = await db.execute(
+        select(func.count()).select_from(Message).where(Message.session_id == session_id)
+    )
+    total = count_result.scalar()
+
+    # Load messages — paginate only if limit is provided
+    msg_query = (
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.line_number)
+    )
+    if limit is not None:
+        msg_query = msg_query.offset(offset).limit(limit)
+    msgs_result = await db.execute(msg_query)
+    messages = msgs_result.scalars().all()
+
     return SessionDetail(
         id=session.id,
         uuid=session.uuid,
@@ -287,6 +301,9 @@ async def get_session_detail(
         started_at=session.started_at,
         last_activity_at=session.last_activity_at,
         message_count=session.message_count,
+        total_messages=total,
+        offset=offset,
+        limit=limit,
         messages=[
             MessageDetail(
                 id=m.id,

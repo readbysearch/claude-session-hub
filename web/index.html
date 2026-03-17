@@ -344,6 +344,27 @@
     line-height: 1.4;
   }
   .search-result-snippet b { color: var(--text); font-weight: 600; }
+
+  /* Load more button */
+  .load-more-btn {
+    text-align: center;
+    padding: 12px 20px;
+    margin: 16px 0;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s;
+  }
+  .load-more-btn:hover { background: var(--bg-secondary); }
+  .msg-count-info {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 8px 0;
+  }
 </style>
 </head>
 <body>
@@ -507,7 +528,16 @@ function renderProject(project) {
 }
 
 // --- Session detail modal ---
+let currentSessionId = null;
+let currentOffset = 0;
+let currentTotal = 0;
+const PAGE_SIZE = 500;
+
 async function openSession(sessionId) {
+  currentSessionId = sessionId;
+  currentOffset = 0;
+  currentTotal = 0;
+
   const overlay = document.getElementById('modalOverlay');
   const body = document.getElementById('modalBody');
   const title = document.getElementById('modalTitle');
@@ -518,21 +548,53 @@ async function openSession(sessionId) {
   title.textContent = 'Loading...';
   meta.textContent = '';
 
+  await loadMessages(sessionId, 0, false);
+}
+
+async function loadMessages(sessionId, offset, append) {
+  const body = document.getElementById('modalBody');
+  const title = document.getElementById('modalTitle');
+  const meta = document.getElementById('modalMeta');
+
   try {
-    const resp = await fetch(`${API}/api/sessions/${sessionId}`);
+    const resp = await fetch(`${API}/api/sessions/${sessionId}?offset=${offset}&limit=${PAGE_SIZE}`);
     const session = await resp.json();
 
-    title.textContent = session.title || 'Untitled session';
-    meta.innerHTML = `
-      ${escapeHtml(session.machine_name)} · ${escapeHtml(session.project_path)}<br>
-      ${session.message_count} messages ·
-      ${formatTime(session.started_at)} — ${formatTime(session.last_activity_at)}
-    `;
+    currentTotal = session.total_messages;
+    currentOffset = offset + session.messages.length;
 
-    body.innerHTML = session.messages.map(renderMessage).join('');
+    if (!append) {
+      title.textContent = session.title || 'Untitled session';
+      meta.innerHTML = `
+        ${escapeHtml(session.machine_name)} · ${escapeHtml(session.project_path)}<br>
+        ${formatTime(session.started_at)} — ${formatTime(session.last_activity_at)}
+      `;
+      body.innerHTML = '';
+    } else {
+      body.querySelector('.load-more-btn')?.remove();
+    }
+
+    // Update message count display
+    const countInfo = `<div class="msg-count-info">Showing ${currentOffset} of ${currentTotal} messages</div>`;
+    meta.querySelector('.msg-count-info')?.remove();
+    meta.insertAdjacentHTML('beforeend', countInfo);
+
+    body.insertAdjacentHTML('beforeend', session.messages.map(renderMessage).join(''));
+
+    // Add "Load more" button if more messages exist
+    if (currentOffset < currentTotal) {
+      const remaining = currentTotal - currentOffset;
+      body.insertAdjacentHTML('beforeend',
+        `<div class="load-more-btn" onclick="loadMessages(${sessionId}, ${currentOffset}, true)">
+          Load more (${remaining} remaining)
+        </div>`
+      );
+    }
 
   } catch (err) {
-    body.innerHTML = `<div class="empty">Failed to load session: ${err.message}</div>`;
+    if (!append) {
+      body.innerHTML = `<div class="empty">Failed to load session: ${err.message}</div>`;
+    }
   }
 }
 
