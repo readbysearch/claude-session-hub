@@ -89,11 +89,22 @@ python cli.py show 42 [--json]
 # Condensed view — human/assistant text only, truncated to 200 chars
 python cli.py show 42 --summary
 
+# Dump session as plain text (pipe to grep/awk)
+python cli.py dump 42
+python cli.py dump 42 | grep -i -C3 "pytorch"
+
+# Dump as JSONL (pipe to jq)
+python cli.py dump 42 --jsonl | jq 'select(.role == "human")'
+
+# Filter by role
+python cli.py dump 42 --role human --role assistant
+
 # List connected machines
 python cli.py machines [--json]
 ```
 
 All commands support `--json` for raw JSON output (useful for piping to `jq` or LLM context).
+The `dump` command outputs plain text or JSONL for composability with UNIX tools.
 
 ## Database Schema
 

@@ -7,6 +7,7 @@ Usage:
     python cli.py timeline [--days N] [--json]
     python cli.py search <query> [--json]
     python cli.py show <id> [--json] [--summary]
+    python cli.py dump <id> [--jsonl] [--role ROLE]
     python cli.py machines [--json]
 """
 
@@ -218,6 +219,38 @@ def show(session_id, as_json, summary):
             click.echo(text)
         elif msg.get("tool_name"):
             click.echo(f"  tool: {msg['tool_name']}")
+
+
+@cli.command()
+@click.argument("session_id", type=int)
+@click.option("--jsonl", is_flag=True, help="One JSON object per message (for jq).")
+@click.option("--role", multiple=True, help="Filter by role (e.g. --role human --role assistant).")
+def dump(session_id, jsonl, role):
+    """Dump session content to stdout for piping to grep/jq/awk."""
+    data = api_get(f"/api/sessions/{session_id}")
+    roles = set(role) if role else None
+
+    for msg in data.get("messages", []):
+        msg_role = msg.get("role") or msg.get("msg_type") or "unknown"
+        if roles and msg_role not in roles:
+            continue
+
+        if jsonl:
+            obj = {
+                "role": msg_role,
+                "text": msg.get("content_text") or "",
+                "tool": msg.get("tool_name"),
+                "timestamp": msg.get("timestamp"),
+                "line": msg.get("line_number"),
+            }
+            sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        else:
+            text = msg.get("content_text") or ""
+            if not text and msg.get("tool_name"):
+                text = f"[tool: {msg['tool_name']}]"
+            if not text:
+                continue
+            sys.stdout.write(f"[{msg_role}] {text}\n")
 
 
 @cli.command()
