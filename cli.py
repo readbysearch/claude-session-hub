@@ -153,6 +153,16 @@ def timeline(days, as_json):
                 click.echo(f"    [{s['id']}] {title}  ({ago}, {s['message_count']} msgs)")
 
 
+def snippet_to_terminal(html_snippet):
+    """Convert <b>...</b> from ts_headline to ANSI bold for terminal display."""
+    import re
+    text = re.sub(r"<b>", "\033[1m", html_snippet)
+    text = re.sub(r"</b>", "\033[0m", text)
+    # Collapse whitespace for cleaner display
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 @cli.command()
 @click.argument("query")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
@@ -175,8 +185,11 @@ def search(query, as_json):
         ago = time_ago(r.get("last_activity_at"))
         click.echo(
             f"[{r['session_id']}] {title}  "
-            f"({r['project_name']} @ {r['machine_name']}, {ago})"
+            f"({r.get('project_name') or r.get('project_path')} @ {r['machine_name']}, {ago})"
         )
+        # Show up to 2 snippets indented under the session line
+        for snippet in (r.get("snippets") or [])[:2]:
+            click.echo(f"      ...{snippet_to_terminal(snippet)}")
 
 
 @cli.command()

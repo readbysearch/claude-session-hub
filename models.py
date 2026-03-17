@@ -2,6 +2,7 @@ import datetime
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, ForeignKey, Index, JSON, func,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -62,6 +63,8 @@ class Session(Base):
     message_count = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    title_search_vector = Column(TSVECTOR)
+
     project = relationship("Project", back_populates="sessions")
     messages = relationship("Message", back_populates="session", lazy="noload")
 
@@ -83,6 +86,8 @@ class Message(Base):
     tool_name = Column(String(128), nullable=True)  # For tool_use/tool_result
     timestamp = Column(DateTime(timezone=True), nullable=True)
     raw_json = Column(JSON, nullable=False)  # Full original line — never lose data
+
+    search_vector = Column(TSVECTOR)
 
     session = relationship("Session", back_populates="messages")
 

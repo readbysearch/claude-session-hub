@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc, delete
+from sqlalchemy import select, func, desc, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,7 +28,7 @@ from models import User, Machine, Project, Session, Message
 from schemas import (
     MachineRegisterRequest, MachineRegisterResponse, MachineInfo,
     UploadPayload, SessionSummary, ProjectSummary, MachineTimeline,
-    SessionDetail, MessageDetail,
+    SessionDetail, MessageDetail, SearchResult,
 )
 from auth import (
     generate_api_key, hash_api_key, require_admin, require_machine,
@@ -326,62 +326,91 @@ async def list_machines(
 # Web UI API: search sessions (basic auth)
 # ---------------------------------------------------------------------------
 
-@app.get("/api/search")
+@app.get("/api/search", response_model=list[SearchResult])
 async def search_sessions(
     q: str = Query(..., min_length=1),
     limit: int = Query(default=50, ge=1, le=200),
     _user: str = Depends(require_basic_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """Basic text search across message content and session titles."""
-    pattern = f"%{q}%"
+    """Full-text search across message content and session titles with ranked results and snippets."""
+    # websearch_to_tsquery supports Google-like syntax: "agentic visual" → AND by default
+    # It returns NULL for stop-word-only queries, so we coalesce to an empty query
+    fts_query = text("""
+        WITH query AS (
+            SELECT websearch_to_tsquery('english', :q) AS tsq
+        ),
+        msg_matches AS (
+            SELECT
+                m.session_id,
+                ts_rank(m.search_vector, q.tsq, 1) AS rank,
+                ts_headline('english', m.content_text, q.tsq,
+                    'MaxFragments=1, MaxWords=25, MinWords=10, StartSel=<b>, StopSel=</b>'
+                ) AS snippet
+            FROM messages m, query q
+            WHERE q.tsq IS NOT NULL AND m.search_vector @@ q.tsq
+        ),
+        title_matches AS (
+            SELECT
+                s.id AS session_id,
+                ts_rank(s.title_search_vector, q.tsq, 1) * 2 AS rank,
+                ts_headline('english', s.title, q.tsq,
+                    'MaxFragments=1, MaxWords=25, MinWords=5, StartSel=<b>, StopSel=</b>'
+                ) AS snippet
+            FROM sessions s, query q
+            WHERE q.tsq IS NOT NULL AND s.title_search_vector @@ q.tsq
+        ),
+        combined AS (
+            SELECT session_id, rank, snippet FROM msg_matches
+            UNION ALL
+            SELECT session_id, rank, snippet FROM title_matches
+        ),
+        ranked AS (
+            SELECT
+                session_id,
+                SUM(rank) AS total_rank,
+                array_agg(snippet ORDER BY rank DESC) AS snippets
+            FROM combined
+            GROUP BY session_id
+            ORDER BY total_rank DESC
+            LIMIT :lim
+        )
+        SELECT
+            r.session_id,
+            s.uuid,
+            s.title,
+            p.original_path AS project_path,
+            p.display_name AS project_name,
+            mach.name AS machine_name,
+            s.last_activity_at,
+            s.message_count,
+            r.total_rank AS rank,
+            r.snippets[1:3] AS snippets
+        FROM ranked r
+        JOIN sessions s ON s.id = r.session_id
+        JOIN projects p ON p.id = s.project_id
+        JOIN machines mach ON mach.id = p.machine_id
+        ORDER BY r.total_rank DESC
+    """)
 
-    title_results = await db.execute(
-        select(Session)
-        .where(Session.title.ilike(pattern))
-        .order_by(desc(Session.last_activity_at))
-        .limit(limit)
-    )
-    title_sessions = title_results.scalars().all()
+    result = await db.execute(fts_query, {"q": q, "lim": limit})
+    rows = result.all()
 
-    msg_results = await db.execute(
-        select(Message.session_id)
-        .where(Message.content_text.ilike(pattern))
-        .group_by(Message.session_id)
-        .limit(limit)
-    )
-    msg_session_ids = [row[0] for row in msg_results.all()]
-
-    all_session_ids = list({s.id for s in title_sessions} | set(msg_session_ids))
-
-    if not all_session_ids:
-        return []
-
-    sessions_result = await db.execute(
-        select(Session)
-        .where(Session.id.in_(all_session_ids))
-        .order_by(desc(Session.last_activity_at))
-    )
-    sessions = sessions_result.scalars().all()
-
-    results = []
-    for s in sessions:
-        proj_result = await db.execute(select(Project).where(Project.id == s.project_id))
-        project = proj_result.scalar_one()
-        machine_result = await db.execute(select(Machine).where(Machine.id == project.machine_id))
-        machine = machine_result.scalar_one()
-        results.append({
-            "session_id": s.id,
-            "uuid": s.uuid,
-            "title": s.title,
-            "project_path": project.original_path,
-            "project_name": project.display_name,
-            "machine_name": machine.name,
-            "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else None,
-            "message_count": s.message_count,
-        })
-
-    return results
+    return [
+        SearchResult(
+            session_id=row.session_id,
+            uuid=row.uuid,
+            title=row.title,
+            project_path=row.project_path,
+            project_name=row.project_name,
+            machine_name=row.machine_name,
+            last_activity_at=row.last_activity_at,
+            message_count=row.message_count,
+            rank=float(row.rank),
+            snippets=row.snippets or [],
+        )
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------

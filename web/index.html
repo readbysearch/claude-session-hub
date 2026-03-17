@@ -336,6 +336,14 @@
   .search-result:hover { background: var(--bg-tertiary); }
   .search-result-title { font-weight: 600; font-size: 14px; }
   .search-result-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .search-result-snippets { margin-top: 6px; }
+  .search-result-snippet {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 4px 0;
+    line-height: 1.4;
+  }
+  .search-result-snippet b { color: var(--text); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -672,15 +680,21 @@ searchInput.addEventListener('keydown', async (e) => {
         return;
       }
 
-      searchResults.innerHTML = results.map(r => `
-        <div class="search-result" onclick="openSession(${r.session_id})">
-          <div class="search-result-title">${escapeHtml(r.title || 'Untitled')}</div>
-          <div class="search-result-meta">
-            ${escapeHtml(r.machine_name)} · ${escapeHtml(r.project_name || r.project_path)} ·
-            ${r.message_count} messages · ${timeAgo(r.last_activity_at)}
+      searchResults.innerHTML = results.map(r => {
+        const snippetHtml = (r.snippets || []).slice(0, 3).map(s =>
+          `<div class="search-result-snippet">${s}</div>`
+        ).join('');
+        return `
+          <div class="search-result" onclick="openSession(${r.session_id})">
+            <div class="search-result-title">${escapeHtml(r.title || 'Untitled')}</div>
+            <div class="search-result-meta">
+              ${escapeHtml(r.machine_name)} · ${escapeHtml(r.project_name || r.project_path)} ·
+              ${r.message_count} messages · ${timeAgo(r.last_activity_at)}
+            </div>
+            ${snippetHtml ? `<div class="search-result-snippets">${snippetHtml}</div>` : ''}
           </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
     } catch (err) {
       searchResults.innerHTML = `<div class="empty">Search failed: ${err.message}</div>`;
     }

@@ -85,6 +85,19 @@ class MessageDetail(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SearchResult(BaseModel):
+    session_id: int
+    uuid: str
+    title: str | None = None
+    project_path: str
+    project_name: str | None = None
+    machine_name: str
+    last_activity_at: datetime | None = None
+    message_count: int = 0
+    rank: float = 0.0
+    snippets: list[str] = []
+
+
 class SessionDetail(BaseModel):
     id: int
     uuid: str
