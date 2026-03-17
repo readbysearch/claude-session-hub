@@ -4,6 +4,7 @@ Claude Session Hub — FastAPI server.
 Endpoints:
   POST /api/users/create          — Admin: create a user
   POST /api/machines/register     — Admin: register a new machine, get API key
+  DELETE /api/sessions/{id}/messages — Admin: reset session for reimport
   POST /api/upload                — Daemon: upload JSONL lines for a session
   GET  /api/timeline              — Web UI (basic auth): recent sessions
   GET  /api/sessions/{id}         — Web UI (basic auth): session detail
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -111,6 +112,40 @@ async def register_machine(
 
     logger.info(f"Registered machine: {req.name} (id={machine.id})")
     return MachineRegisterResponse(machine_id=machine.id, api_key=api_key)
+
+
+# ---------------------------------------------------------------------------
+# Admin: reset session for reimport
+# ---------------------------------------------------------------------------
+
+@app.delete("/api/sessions/{session_id}/messages")
+async def reset_session(
+    session_id: int,
+    _admin: str = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all messages for a session and reset its metadata,
+    so the daemon can re-upload enriched data."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    deleted = await db.execute(
+        delete(Message).where(Message.session_id == session_id)
+    )
+    session.title = None
+    session.started_at = None
+    session.last_activity_at = None
+    session.message_count = 0
+    await db.commit()
+
+    logger.info(f"Reset session {session_id} (uuid={session.uuid}): deleted {deleted.rowcount} messages")
+    return {
+        "session_id": session_id,
+        "uuid": session.uuid,
+        "messages_deleted": deleted.rowcount,
+    }
 
 
 # ---------------------------------------------------------------------------
