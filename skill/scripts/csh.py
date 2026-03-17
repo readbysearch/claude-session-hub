@@ -2,16 +2,23 @@
 """
 csh — CLI for querying Claude Session Hub.
 
+Configuration (checked in order):
+  1. Environment variables: CSH_SERVER, CSH_USER, CSH_PASS
+  2. Config file: ~/.claude-session-hub/cli.yaml
+  3. Interactive setup: csh config
+
 Usage:
-    python cli.py config
-    python cli.py timeline [--days N] [--json]
-    python cli.py search <query> [--json]
-    python cli.py show <id> [--json] [--summary]
-    python cli.py dump <id> [--jsonl] [--role ROLE]
-    python cli.py machines [--json]
+    csh config
+    csh search <query> [--json]
+    csh timeline [--days N] [--json]
+    csh show <id> [--json] [--summary]
+    csh dump <id> [--jsonl] [--role ROLE]
+    csh machines [--json]
 """
 
 import json
+import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,11 +32,33 @@ CONFIG_FILE = CONFIG_DIR / "cli.yaml"
 
 
 def load_config():
-    if not CONFIG_FILE.exists():
-        click.echo(f"Config not found at {CONFIG_FILE}. Run: csh config", err=True)
-        sys.exit(1)
-    with open(CONFIG_FILE) as f:
-        return yaml.safe_load(f)
+    """Load config from env vars first, then fall back to yaml file."""
+    server = os.environ.get("CSH_SERVER")
+    user = os.environ.get("CSH_USER")
+    password = os.environ.get("CSH_PASS")
+
+    if server and user and password:
+        return {"server_url": server, "username": user, "password": password}
+
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE) as f:
+            cfg = yaml.safe_load(f) or {}
+        # Env vars override individual fields
+        if server:
+            cfg["server_url"] = server
+        if user:
+            cfg["username"] = user
+        if password:
+            cfg["password"] = password
+        if cfg.get("server_url") and cfg.get("username") and cfg.get("password"):
+            return cfg
+
+    click.echo(
+        "Config not found. Set CSH_SERVER/CSH_USER/CSH_PASS env vars, "
+        f"or run: csh config",
+        err=True,
+    )
+    sys.exit(1)
 
 
 def api_get(path, params=None):
@@ -47,7 +76,7 @@ def api_get(path, params=None):
         click.echo(f"Error: cannot connect to {cfg['server_url']}", err=True)
         sys.exit(1)
     if resp.status_code == 401:
-        click.echo("Error: authentication failed — check credentials in cli.yaml", err=True)
+        click.echo("Error: authentication failed — check credentials", err=True)
         sys.exit(1)
     if resp.status_code != 200:
         click.echo(f"Error: {resp.status_code} {resp.text}", err=True)
@@ -76,6 +105,14 @@ def time_ago(iso_str):
         return f"{d}d ago"
     except Exception:
         return iso_str
+
+
+def snippet_to_terminal(html_snippet):
+    """Convert <b>...</b> from ts_headline to ANSI bold for terminal display."""
+    text = re.sub(r"<b>", "\033[1m", html_snippet)
+    text = re.sub(r"</b>", "\033[0m", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 @click.group()
@@ -151,16 +188,6 @@ def timeline(days, as_json):
                     title = title[:67] + "..."
                 ago = time_ago(s.get("last_activity_at"))
                 click.echo(f"    [{s['id']}] {title}  ({ago}, {s['message_count']} msgs)")
-
-
-def snippet_to_terminal(html_snippet):
-    """Convert <b>...</b> from ts_headline to ANSI bold for terminal display."""
-    import re
-    text = re.sub(r"<b>", "\033[1m", html_snippet)
-    text = re.sub(r"</b>", "\033[0m", text)
-    # Collapse whitespace for cleaner display
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
 
 
 @cli.command()
