@@ -388,6 +388,24 @@
     font-size: 12px;
     color: var(--text-muted);
   }
+  .heatmap-title .heatmap-tz {
+    margin-left: auto;
+    font-weight: 400;
+    font-size: 12px;
+  }
+  .heatmap-title .heatmap-tz select {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 2px 6px;
+    outline: none;
+    cursor: pointer;
+  }
+  .heatmap-title .heatmap-tz select:focus {
+    border-color: var(--accent-dim);
+  }
   .heatmap-svg text {
     fill: var(--text-muted);
     font-size: 10px;
@@ -505,6 +523,18 @@ function truncate(text, maxLen = 120) {
 }
 
 // --- Heatmap ---
+const HEATMAP_TIMEZONES = [
+  'UTC',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+  'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Kolkata',
+  'Australia/Sydney', 'Pacific/Auckland',
+];
+
+function getHeatmapTz() {
+  return localStorage.getItem('heatmap_tz') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
 const HEATMAP_COLORS = ['#1e2733', '#0e4429', '#006d32', '#26a641', '#3fb950'];
 
 function getHeatmapColor(prompts) {
@@ -584,16 +614,30 @@ function renderHeatmap(data) {
     </div>
   `;
 
+  const currentTz = getHeatmapTz();
+  const tzOptions = HEATMAP_TIMEZONES.includes(currentTz)
+    ? HEATMAP_TIMEZONES
+    : [currentTz, ...HEATMAP_TIMEZONES];
+  const tzSelect = tzOptions.map(tz =>
+    `<option value="${tz}" ${tz === currentTz ? 'selected' : ''}>${tz.replace(/_/g, ' ')}</option>`
+  ).join('');
+
   const container = document.getElementById('heatmap');
   container.innerHTML = `
     <div class="heatmap-title">
       Activity
       <span class="heatmap-total">${data.total_prompts.toLocaleString()} prompts in the past year</span>
+      <span class="heatmap-tz"><select id="heatmapTzSelect">${tzSelect}</select></span>
     </div>
     ${svg}
     ${legend}
   `;
   container.style.display = 'block';
+
+  document.getElementById('heatmapTzSelect').addEventListener('change', (e) => {
+    localStorage.setItem('heatmap_tz', e.target.value);
+    loadHeatmap();
+  });
 
   // Tooltip
   const tooltip = document.getElementById('heatmapTooltip');
@@ -621,7 +665,8 @@ function renderHeatmap(data) {
 
 async function loadHeatmap() {
   try {
-    const resp = await fetch(`${API}/api/heatmap`);
+    const tz = getHeatmapTz();
+    const resp = await fetch(`${API}/api/heatmap?tz=${encodeURIComponent(tz)}`);
     const data = await resp.json();
     renderHeatmap(data);
   } catch (err) {

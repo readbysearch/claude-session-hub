@@ -440,6 +440,7 @@ async def search_sessions(
 async def get_heatmap(
     _user: str = Depends(require_basic_auth),
     db: AsyncSession = Depends(get_db),
+    tz: str = Query("UTC"),
 ):
     query = text("""
         SELECT
@@ -447,23 +448,23 @@ async def get_heatmap(
             COALESCE(a.prompt_count, 0) AS prompts,
             COALESCE(a.session_count, 0) AS sessions
         FROM generate_series(
-            CURRENT_DATE - INTERVAL '364 days',
-            CURRENT_DATE,
+            (NOW() AT TIME ZONE :tz)::date - 364,
+            (NOW() AT TIME ZONE :tz)::date,
             '1 day'
         ) AS d(date)
         LEFT JOIN (
             SELECT
-                DATE(m.timestamp) AS day,
+                DATE(m.timestamp AT TIME ZONE :tz) AS day,
                 COUNT(*) AS prompt_count,
                 COUNT(DISTINCT m.session_id) AS session_count
             FROM messages m
             WHERE m.role IN ('human', 'user')
-              AND m.timestamp >= CURRENT_DATE - INTERVAL '364 days'
-            GROUP BY DATE(m.timestamp)
+              AND m.timestamp >= (NOW() AT TIME ZONE :tz)::date - 364
+            GROUP BY DATE(m.timestamp AT TIME ZONE :tz)
         ) a ON d.date = a.day
         ORDER BY d.date
     """)
-    result = await db.execute(query)
+    result = await db.execute(query, {"tz": tz})
     rows = result.all()
 
     days = [HeatmapDay(date=r.date, prompts=r.prompts, sessions=r.sessions) for r in rows]
