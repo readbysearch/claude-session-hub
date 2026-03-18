@@ -10,6 +10,7 @@ Endpoints:
   GET  /api/sessions/{id}         — Web UI (basic auth): session detail
   GET  /api/machines              — Web UI (basic auth): list machines
   GET  /api/search                — Web UI (basic auth): search sessions
+  GET  /api/heatmap              — Web UI (basic auth): daily activity heatmap
   GET  /                          — Serve the web UI
 """
 import logging
@@ -29,6 +30,7 @@ from schemas import (
     MachineRegisterRequest, MachineRegisterResponse, MachineInfo,
     UploadPayload, SessionSummary, ProjectSummary, MachineTimeline,
     SessionDetail, MessageDetail, SearchResult,
+    HeatmapDay, HeatmapResponse,
 )
 from auth import (
     generate_api_key, hash_api_key, require_admin, require_machine,
@@ -428,6 +430,50 @@ async def search_sessions(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Heatmap
+# ---------------------------------------------------------------------------
+
+@app.get("/api/heatmap", response_model=HeatmapResponse)
+async def get_heatmap(
+    _user: str = Depends(require_basic_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    query = text("""
+        SELECT
+            d.date::date::text AS date,
+            COALESCE(a.prompt_count, 0) AS prompts,
+            COALESCE(a.session_count, 0) AS sessions
+        FROM generate_series(
+            CURRENT_DATE - INTERVAL '364 days',
+            CURRENT_DATE,
+            '1 day'
+        ) AS d(date)
+        LEFT JOIN (
+            SELECT
+                DATE(m.timestamp) AS day,
+                COUNT(*) AS prompt_count,
+                COUNT(DISTINCT m.session_id) AS session_count
+            FROM messages m
+            WHERE m.role IN ('human', 'user')
+              AND m.timestamp >= CURRENT_DATE - INTERVAL '364 days'
+            GROUP BY DATE(m.timestamp)
+        ) a ON d.date = a.day
+        ORDER BY d.date
+    """)
+    result = await db.execute(query)
+    rows = result.all()
+
+    days = [HeatmapDay(date=r.date, prompts=r.prompts, sessions=r.sessions) for r in rows]
+    prompt_counts = [d.prompts for d in days]
+
+    return HeatmapResponse(
+        days=days,
+        max_prompts=max(prompt_counts) if prompt_counts else 0,
+        total_prompts=sum(prompt_counts),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -365,6 +365,67 @@
     color: var(--text-muted);
     padding: 8px 0;
   }
+
+  /* Heatmap */
+  .heatmap-container {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+  }
+  .heatmap-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .heatmap-title .heatmap-total {
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .heatmap-svg text {
+    fill: var(--text-muted);
+    font-size: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  .heatmap-svg .day-cell {
+    rx: 2;
+    ry: 2;
+    outline: 1px solid rgba(27, 31, 35, 0.06);
+    outline-offset: -1px;
+  }
+  .heatmap-tooltip {
+    position: fixed;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text);
+    pointer-events: none;
+    z-index: 300;
+    white-space: nowrap;
+    display: none;
+  }
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    justify-content: flex-end;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .heatmap-legend .legend-cell {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
 </style>
 </head>
 <body>
@@ -386,6 +447,7 @@
 </div>
 
 <div class="content">
+  <div id="heatmap" class="heatmap-container" style="display:none"></div>
   <div id="loading" class="loading">Loading timeline</div>
   <div id="timeline"></div>
   <div id="searchResults" class="search-results"></div>
@@ -407,6 +469,8 @@
     <div class="modal-body" id="modalBody"></div>
   </div>
 </div>
+
+<div class="heatmap-tooltip" id="heatmapTooltip"></div>
 
 <script>
 const API = '';  // Same origin
@@ -438,6 +502,131 @@ function escapeHtml(text) {
 function truncate(text, maxLen = 120) {
   if (!text) return '';
   return text.length > maxLen ? text.slice(0, maxLen) + '...' : text;
+}
+
+// --- Heatmap ---
+const HEATMAP_COLORS = ['#1e2733', '#0e4429', '#006d32', '#26a641', '#3fb950'];
+
+function getHeatmapColor(prompts) {
+  if (prompts === 0) return HEATMAP_COLORS[0];
+  if (prompts <= 5) return HEATMAP_COLORS[1];
+  if (prompts <= 15) return HEATMAP_COLORS[2];
+  if (prompts <= 30) return HEATMAP_COLORS[3];
+  return HEATMAP_COLORS[4];
+}
+
+function renderHeatmap(data) {
+  const dayMap = new Map();
+  for (const d of data.days) {
+    dayMap.set(d.date, d);
+  }
+
+  const CELL = 11, GAP = 2, PITCH = CELL + GAP;
+  const LEFT = 30, TOP = 20;
+  const COLS = 53, ROWS = 7;
+  const svgW = LEFT + COLS * PITCH;
+  const svgH = TOP + ROWS * PITCH;
+
+  // Find the starting Sunday: go back from today to Sunday, then 52 more weeks
+  const today = new Date();
+  const todayDay = today.getDay(); // 0=Sun
+  const start = new Date(today);
+  start.setDate(start.getDate() - todayDay - 52 * 7);
+
+  const rects = [];
+  const monthLabels = [];
+  let lastMonth = -1;
+
+  const cursor = new Date(start);
+  for (let col = 0; col < COLS; col++) {
+    for (let row = 0; row < ROWS; row++) {
+      if (cursor > today) { cursor.setDate(cursor.getDate() + 1); continue; }
+
+      const dateStr = cursor.toISOString().slice(0, 10);
+      const entry = dayMap.get(dateStr) || { prompts: 0, sessions: 0 };
+      const x = LEFT + col * PITCH;
+      const y = TOP + row * PITCH;
+
+      rects.push(
+        `<rect class="day-cell" x="${x}" y="${y}" width="${CELL}" height="${CELL}" ` +
+        `fill="${getHeatmapColor(entry.prompts)}" ` +
+        `data-date="${dateStr}" data-prompts="${entry.prompts}" data-sessions="${entry.sessions}"/>`
+      );
+
+      // Month label at top when month changes (only on first row)
+      if (row === 0) {
+        const month = cursor.getMonth();
+        if (month !== lastMonth) {
+          lastMonth = month;
+          const label = cursor.toLocaleString('default', { month: 'short' });
+          monthLabels.push(`<text x="${x}" y="${TOP - 6}">${label}</text>`);
+        }
+      }
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  // Day-of-week labels
+  const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+  const dayLabelSvg = dayLabels.map((label, i) => {
+    if (!label) return '';
+    return `<text x="0" y="${TOP + i * PITCH + CELL - 2}" text-anchor="start">${label}</text>`;
+  }).join('');
+
+  const svg = `<svg class="heatmap-svg" width="${svgW}" height="${svgH}">${monthLabels.join('')}${dayLabelSvg}${rects.join('')}</svg>`;
+
+  const legend = `
+    <div class="heatmap-legend">
+      <span>Less</span>
+      ${HEATMAP_COLORS.map(c => `<div class="legend-cell" style="background:${c}"></div>`).join('')}
+      <span>More</span>
+    </div>
+  `;
+
+  const container = document.getElementById('heatmap');
+  container.innerHTML = `
+    <div class="heatmap-title">
+      Activity
+      <span class="heatmap-total">${data.total_prompts.toLocaleString()} prompts in the past year</span>
+    </div>
+    ${svg}
+    ${legend}
+  `;
+  container.style.display = 'block';
+
+  // Tooltip
+  const tooltip = document.getElementById('heatmapTooltip');
+  container.querySelectorAll('.day-cell').forEach(rect => {
+    rect.addEventListener('mouseenter', (e) => {
+      const d = new Date(rect.dataset.date + 'T12:00:00');
+      const dateLabel = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const prompts = parseInt(rect.dataset.prompts);
+      const sessions = parseInt(rect.dataset.sessions);
+      const promptText = prompts === 0 ? 'No prompts' : `${prompts} prompt${prompts !== 1 ? 's' : ''}`;
+      const sessionText = `${sessions} session${sessions !== 1 ? 's' : ''}`;
+      tooltip.textContent = prompts === 0 ? `${promptText} on ${dateLabel}` : `${promptText}, ${sessionText} on ${dateLabel}`;
+      tooltip.style.display = 'block';
+      const r = rect.getBoundingClientRect();
+      let left = r.left + r.width / 2 - tooltip.offsetWidth / 2;
+      left = Math.max(4, Math.min(left, window.innerWidth - tooltip.offsetWidth - 4));
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = (r.top - tooltip.offsetHeight - 6) + 'px';
+    });
+    rect.addEventListener('mouseleave', () => {
+      tooltip.style.display = 'none';
+    });
+  });
+}
+
+async function loadHeatmap() {
+  try {
+    const resp = await fetch(`${API}/api/heatmap`);
+    const data = await resp.json();
+    renderHeatmap(data);
+  } catch (err) {
+    console.error('Failed to load heatmap:', err);
+  }
 }
 
 // --- Render timeline ---
@@ -722,6 +911,8 @@ const searchInput = document.getElementById('searchInput');
 const searchResults = document.getElementById('searchResults');
 const timelineEl2 = document.getElementById('timeline');
 
+const heatmapEl = document.getElementById('heatmap');
+
 searchInput.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const q = searchInput.value.trim();
@@ -729,12 +920,14 @@ searchInput.addEventListener('keydown', async (e) => {
       searchResults.classList.remove('active');
       searchResults.innerHTML = '';
       timelineEl2.style.display = 'block';
+      heatmapEl.style.display = 'block';
       return;
     }
     try {
       const resp = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
       const results = await resp.json();
       timelineEl2.style.display = 'none';
+      heatmapEl.style.display = 'none';
       searchResults.classList.add('active');
 
       if (!results.length) {
@@ -769,10 +962,12 @@ searchInput.addEventListener('input', () => {
     searchResults.classList.remove('active');
     searchResults.innerHTML = '';
     timelineEl2.style.display = 'block';
+    heatmapEl.style.display = 'block';
   }
 });
 
 // --- Init ---
+loadHeatmap();
 loadTimeline();
 // Refresh every 30 seconds
 setInterval(loadTimeline, 30000);

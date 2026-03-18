@@ -113,3 +113,17 @@ class SessionDetail(BaseModel):
     limit: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+# --- Heatmap ---
+
+class HeatmapDay(BaseModel):
+    date: str       # "2026-03-17"
+    prompts: int    # human-role messages on this day
+    sessions: int   # distinct sessions with activity on this day
+
+
+class HeatmapResponse(BaseModel):
+    days: list[HeatmapDay]
+    max_prompts: int
+    total_prompts: int
