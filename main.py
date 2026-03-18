@@ -460,6 +460,7 @@ async def get_heatmap(
             FROM messages m
             WHERE m.role IN ('human', 'user')
               AND m.timestamp >= (NOW() AT TIME ZONE :tz)::date - 364
+              AND (m.raw_json->'message'->'content'->0->>'type') IS DISTINCT FROM 'tool_result'
             GROUP BY DATE(m.timestamp AT TIME ZONE :tz)
         ) a ON d.date = a.day
         ORDER BY d.date
