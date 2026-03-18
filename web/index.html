@@ -539,9 +539,9 @@ const HEATMAP_COLORS = ['#1e2733', '#0e4429', '#006d32', '#26a641', '#3fb950'];
 
 function getHeatmapColor(prompts) {
   if (prompts === 0) return HEATMAP_COLORS[0];
-  if (prompts <= 5) return HEATMAP_COLORS[1];
-  if (prompts <= 15) return HEATMAP_COLORS[2];
-  if (prompts <= 30) return HEATMAP_COLORS[3];
+  if (prompts <= 20) return HEATMAP_COLORS[1];
+  if (prompts <= 50) return HEATMAP_COLORS[2];
+  if (prompts < 100) return HEATMAP_COLORS[3];
   return HEATMAP_COLORS[4];
 }
 
