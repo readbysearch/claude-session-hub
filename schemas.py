@@ -127,3 +127,17 @@ class HeatmapResponse(BaseModel):
     days: list[HeatmapDay]
     max_prompts: int
     total_prompts: int
+
+
+# --- Scatter plot (7-day activity) ---
+
+class ActivityPoint(BaseModel):
+    timestamp: str          # "2026-03-23T14:32:00" (in requested tz)
+    session_id: int
+    session_title: str | None = None
+
+
+class ActivityResponse(BaseModel):
+    points: list[ActivityPoint]
+    tz: str
+    total: int

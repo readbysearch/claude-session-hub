@@ -444,6 +444,29 @@
     height: 10px;
     border-radius: 2px;
   }
+
+  /* Scatter plot */
+  .scatter-svg text {
+    fill: var(--text-muted);
+    font-size: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  .scatter-svg .grid-line {
+    stroke: #30363d;
+    stroke-width: 0.5;
+  }
+  .scatter-svg .grid-line-work {
+    stroke: #238636;
+    stroke-width: 0.5;
+  }
+  .scatter-svg .dot {
+    fill: var(--accent);
+    opacity: 0.7;
+    cursor: pointer;
+  }
+  .scatter-svg .dot:hover {
+    opacity: 1;
+  }
 </style>
 </head>
 <body>
@@ -466,6 +489,7 @@
 
 <div class="content">
   <div id="heatmap" class="heatmap-container" style="display:none"></div>
+  <div id="scatterplot" class="heatmap-container" style="display:none"></div>
   <div id="loading" class="loading">Loading timeline</div>
   <div id="timeline"></div>
   <div id="searchResults" class="search-results"></div>
@@ -489,6 +513,7 @@
 </div>
 
 <div class="heatmap-tooltip" id="heatmapTooltip"></div>
+<div class="heatmap-tooltip" id="scatterTooltip"></div>
 
 <script>
 const API = '';  // Same origin
@@ -637,6 +662,7 @@ function renderHeatmap(data) {
   document.getElementById('heatmapTzSelect').addEventListener('change', (e) => {
     localStorage.setItem('heatmap_tz', e.target.value);
     loadHeatmap();
+    loadScatterPlot();
   });
 
   // Tooltip
@@ -671,6 +697,131 @@ async function loadHeatmap() {
     renderHeatmap(data);
   } catch (err) {
     console.error('Failed to load heatmap:', err);
+  }
+}
+
+// --- 7-day scatter plot ---
+function renderScatterPlot(data) {
+  const LEFT = 50, TOP = 30, BOTTOM = 50, RIGHT = 20;
+  const PLOT_W = 630, PLOT_H = 300;
+  const svgW = LEFT + PLOT_W + RIGHT;
+  const svgH = TOP + PLOT_H + BOTTOM;
+  const DAY_W = PLOT_W / 7;
+
+  const currentTz = getHeatmapTz();
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: currentTz });
+
+  // Build 7-day list
+  const days = [];
+  const todayParts = todayStr.split('-').map(Number);
+  const todayDate = new Date(todayParts[0], todayParts[1] - 1, todayParts[2]);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(todayDate);
+    d.setDate(d.getDate() - i);
+    const yyyy = String(d.getFullYear());
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+    days.push({ dateStr, label: `${yyyy}${mm}${dd}`, weekday });
+  }
+  const dayIndex = new Map();
+  days.forEach((d, i) => dayIndex.set(d.dateStr, i));
+
+  const hourToY = (h) => TOP + ((24 - h) / 24) * PLOT_H;
+  const dayToX = (i) => LEFT + i * DAY_W + DAY_W / 2;
+
+  const parts = [];
+
+  // Horizontal grid lines — gray for standard hours
+  for (const h of [0, 4, 8, 10, 12, 16, 18, 20, 24]) {
+    const y = hourToY(h);
+    parts.push(`<line class="grid-line" x1="${LEFT}" y1="${y}" x2="${LEFT + PLOT_W}" y2="${y}"/>`);
+  }
+  // Green for work hours
+  for (const h of [11, 13, 15, 17, 19]) {
+    const y = hourToY(h);
+    parts.push(`<line class="grid-line-work" x1="${LEFT}" y1="${y}" x2="${LEFT + PLOT_W}" y2="${y}"/>`);
+  }
+
+  // Vertical day separators
+  for (let i = 0; i <= 7; i++) {
+    const x = LEFT + i * DAY_W;
+    parts.push(`<line class="grid-line" x1="${x}" y1="${TOP}" x2="${x}" y2="${TOP + PLOT_H}"/>`);
+  }
+
+  // Y-axis labels
+  for (const h of [0, 4, 8, 12, 16, 20, 24]) {
+    parts.push(`<text x="${LEFT - 6}" y="${hourToY(h) + 3}" text-anchor="end">${h}</text>`);
+  }
+
+  // X-axis labels (date + weekday)
+  for (let i = 0; i < 7; i++) {
+    const x = dayToX(i);
+    parts.push(`<text x="${x}" y="${TOP + PLOT_H + 16}" text-anchor="middle">${days[i].label}</text>`);
+    parts.push(`<text x="${x}" y="${TOP + PLOT_H + 30}" text-anchor="middle">${days[i].weekday}</text>`);
+  }
+
+  // Y-axis title
+  parts.push(`<text x="14" y="${TOP + PLOT_H / 2}" text-anchor="middle" transform="rotate(-90,14,${TOP + PLOT_H / 2})">Clock</text>`);
+
+  // Plot dots
+  for (const pt of data.points) {
+    const dateStr = pt.timestamp.slice(0, 10);
+    const di = dayIndex.get(dateStr);
+    if (di === undefined) continue;
+
+    const timeParts = pt.timestamp.slice(11).split(':');
+    const fractionalHour = parseInt(timeParts[0]) + parseInt(timeParts[1]) / 60;
+    const y = hourToY(fractionalHour);
+    const jitter = (Math.random() - 0.5) * (DAY_W * 0.5);
+    const x = dayToX(di) + jitter;
+
+    parts.push(
+      `<circle class="dot" cx="${x}" cy="${y}" r="3" ` +
+      `data-session-id="${pt.session_id}" ` +
+      `data-title="${escapeHtml(pt.session_title || 'Untitled')}" ` +
+      `data-time="${pt.timestamp}"/>`
+    );
+  }
+
+  const container = document.getElementById('scatterplot');
+  container.innerHTML = `
+    <div class="heatmap-title">
+      Report on ${todayStr}
+      <span class="heatmap-total">${data.total} prompts in 7 days</span>
+    </div>
+    <svg class="scatter-svg" width="${svgW}" height="${svgH}">${parts.join('')}</svg>
+  `;
+  container.style.display = 'block';
+
+  // Tooltip + click
+  const tooltip = document.getElementById('scatterTooltip');
+  container.querySelectorAll('.dot').forEach(dot => {
+    dot.addEventListener('mouseenter', () => {
+      const time = dot.dataset.time.slice(11, 16);
+      const date = dot.dataset.time.slice(0, 10);
+      tooltip.textContent = `${date} ${time} — ${dot.dataset.title}`;
+      tooltip.style.display = 'block';
+      const r = dot.getBoundingClientRect();
+      let left = r.left + r.width / 2 - tooltip.offsetWidth / 2;
+      left = Math.max(4, Math.min(left, window.innerWidth - tooltip.offsetWidth - 4));
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = (r.top - tooltip.offsetHeight - 6) + 'px';
+    });
+    dot.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    dot.addEventListener('click', () => { openSession(parseInt(dot.dataset.sessionId)); });
+  });
+}
+
+async function loadScatterPlot() {
+  try {
+    const tz = getHeatmapTz();
+    const resp = await fetch(`${API}/api/activity?tz=${encodeURIComponent(tz)}`);
+    const data = await resp.json();
+    renderScatterPlot(data);
+  } catch (err) {
+    console.error('Failed to load scatter plot:', err);
   }
 }
 
@@ -957,6 +1108,7 @@ const searchResults = document.getElementById('searchResults');
 const timelineEl2 = document.getElementById('timeline');
 
 const heatmapEl = document.getElementById('heatmap');
+const scatterEl = document.getElementById('scatterplot');
 
 searchInput.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
@@ -966,6 +1118,7 @@ searchInput.addEventListener('keydown', async (e) => {
       searchResults.innerHTML = '';
       timelineEl2.style.display = 'block';
       heatmapEl.style.display = 'block';
+      scatterEl.style.display = 'block';
       return;
     }
     try {
@@ -973,6 +1126,7 @@ searchInput.addEventListener('keydown', async (e) => {
       const results = await resp.json();
       timelineEl2.style.display = 'none';
       heatmapEl.style.display = 'none';
+      scatterEl.style.display = 'none';
       searchResults.classList.add('active');
 
       if (!results.length) {
@@ -1008,11 +1162,13 @@ searchInput.addEventListener('input', () => {
     searchResults.innerHTML = '';
     timelineEl2.style.display = 'block';
     heatmapEl.style.display = 'block';
+    scatterEl.style.display = 'block';
   }
 });
 
 // --- Init ---
 loadHeatmap();
+loadScatterPlot();
 loadTimeline();
 // Refresh every 30 seconds
 setInterval(loadTimeline, 30000);

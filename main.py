@@ -11,6 +11,7 @@ Endpoints:
   GET  /api/machines              — Web UI (basic auth): list machines
   GET  /api/search                — Web UI (basic auth): search sessions
   GET  /api/heatmap              — Web UI (basic auth): daily activity heatmap
+  GET  /api/activity             — Web UI (basic auth): 7-day prompt scatter plot
   GET  /                          — Serve the web UI
 """
 import logging
@@ -31,6 +32,7 @@ from schemas import (
     UploadPayload, SessionSummary, ProjectSummary, MachineTimeline,
     SessionDetail, MessageDetail, SearchResult,
     HeatmapDay, HeatmapResponse,
+    ActivityPoint, ActivityResponse,
 )
 from auth import (
     generate_api_key, hash_api_key, require_admin, require_machine,
@@ -476,6 +478,42 @@ async def get_heatmap(
         max_prompts=max(prompt_counts) if prompt_counts else 0,
         total_prompts=sum(prompt_counts),
     )
+
+
+# ---------------------------------------------------------------------------
+# 7-day activity scatter plot
+# ---------------------------------------------------------------------------
+
+@app.get("/api/activity", response_model=ActivityResponse)
+async def get_activity(
+    _user: str = Depends(require_basic_auth),
+    db: AsyncSession = Depends(get_db),
+    tz: str = Query("UTC"),
+):
+    query = text("""
+        SELECT
+            TO_CHAR(m.timestamp AT TIME ZONE :tz, 'YYYY-MM-DD"T"HH24:MI:SS') AS local_ts,
+            m.session_id,
+            s.title AS session_title
+        FROM messages m
+        JOIN sessions s ON s.id = m.session_id
+        WHERE m.role IN ('human', 'user')
+          AND m.timestamp >= ((NOW() AT TIME ZONE :tz)::date - 6) AT TIME ZONE :tz
+          AND (m.raw_json->'message'->'content'->0->>'type') IS DISTINCT FROM 'tool_result'
+        ORDER BY m.timestamp
+    """)
+    result = await db.execute(query, {"tz": tz})
+    rows = result.all()
+
+    points = [
+        ActivityPoint(
+            timestamp=r.local_ts,
+            session_id=r.session_id,
+            session_title=r.session_title,
+        )
+        for r in rows
+    ]
+    return ActivityResponse(points=points, tz=tz, total=len(points))
 
 
 # ---------------------------------------------------------------------------
