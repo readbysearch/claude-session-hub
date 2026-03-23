@@ -216,6 +216,36 @@ class Daemon:
             f"{total_new_lines} new lines uploaded."
         )
 
+    def catchup_scan(self):
+        """Lightweight scan of already-known files for unsynced data.
+
+        Unlike scan_all(), this does NOT walk the directory tree to discover
+        new files (watchdog handles that). It only stat()s files already in
+        _file_map and uploads any data past the saved offset.
+        """
+        synced = 0
+        for filepath, (project_path, session_uuid) in self._file_map.items():
+            p = Path(filepath)
+            if not p.exists():
+                continue
+            offset = self.tracker.get(filepath)
+            if p.stat().st_size <= offset:
+                continue
+            lines, new_offset = read_new_lines(p, offset)
+            if not lines:
+                continue
+            logger.info(
+                f"Catch-up: {len(lines)} unsynced lines in "
+                f"{p.name} (project={project_path})"
+            )
+            if self.uploader.upload(project_path, session_uuid, lines):
+                self.tracker.set(filepath, new_offset)
+                synced += len(lines)
+
+        if synced:
+            self.tracker.save()
+            logger.info(f"Catch-up scan: uploaded {synced} lines.")
+
     def run(self):
         """Start the file watcher daemon."""
         if not self.projects_dir.exists():
@@ -247,9 +277,17 @@ class Daemon:
         signal.signal(signal.SIGINT, shutdown)
         signal.signal(signal.SIGTERM, shutdown)
 
+        # Periodic catch-up scan interval (seconds)
+        catchup_interval = self.config.get("catchup_interval", 300)
+        last_catchup = time.monotonic()
+
         try:
             while not stop_event.is_set():
                 stop_event.wait(timeout=1)
+                now = time.monotonic()
+                if now - last_catchup >= catchup_interval:
+                    last_catchup = now
+                    self.catchup_scan()
         finally:
             observer.stop()
             observer.join()

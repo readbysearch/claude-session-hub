@@ -3,6 +3,7 @@ Ingestion logic: take raw JSONL lines from daemon uploads,
 parse them into structured records, and upsert into the database.
 """
 import hashlib
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -71,6 +72,13 @@ def _extract_content_text(raw: dict) -> str | None:
             return inp[:10000]
 
     return None
+
+
+def _sanitize_text(value: str | None) -> str | None:
+    """Strip null bytes that PostgreSQL cannot store in text columns."""
+    if value is None:
+        return None
+    return value.replace("\x00", "")
 
 
 def _extract_tool_name(raw: dict) -> str | None:
@@ -161,9 +169,12 @@ async def ingest_lines(
         line_num = line["line_number"]
 
         role = _extract_role(raw)
-        content_text = _extract_content_text(raw)
+        content_text = _sanitize_text(_extract_content_text(raw))
         tool_name = _extract_tool_name(raw)
         timestamp = _extract_timestamp(raw)
+
+        # Sanitize raw_json: PostgreSQL cannot store null bytes in JSON columns
+        sanitized_raw = json.loads(json.dumps(raw).replace("\\u0000", ""))
 
         stmt = pg_insert(Message).values(
             session_id=session.id,
@@ -173,7 +184,7 @@ async def ingest_lines(
             content_text=content_text,
             tool_name=tool_name,
             timestamp=timestamp,
-            raw_json=raw,
+            raw_json=sanitized_raw,
         ).on_conflict_do_nothing(index_elements=["session_id", "line_number"])
         result = await db.execute(stmt)
         if result.rowcount > 0:

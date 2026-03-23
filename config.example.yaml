@@ -6,4 +6,5 @@ api_key: YOUR_API_KEY_HERE
 
 batch_size: 200
 debounce_seconds: 3.0
+catchup_interval: 300   # seconds between periodic catch-up scans (default: 300)
 log_level: INFO
