@@ -3,7 +3,6 @@ Ingestion logic: take raw JSONL lines from daemon uploads,
 parse them into structured records, and upsert into the database.
 """
 import hashlib
-import json
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -79,6 +78,17 @@ def _sanitize_text(value: str | None) -> str | None:
     if value is None:
         return None
     return value.replace("\x00", "")
+
+
+def _deep_strip_null_bytes(obj):
+    """Recursively strip actual null bytes from all string values in a JSON-compatible object."""
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    elif isinstance(obj, dict):
+        return {k: _deep_strip_null_bytes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_deep_strip_null_bytes(item) for item in obj]
+    return obj
 
 
 def _extract_tool_name(raw: dict) -> str | None:
@@ -174,7 +184,7 @@ async def ingest_lines(
         timestamp = _extract_timestamp(raw)
 
         # Sanitize raw_json: PostgreSQL cannot store null bytes in JSON columns
-        sanitized_raw = json.loads(json.dumps(raw).replace("\\u0000", ""))
+        sanitized_raw = _deep_strip_null_bytes(raw)
 
         stmt = pg_insert(Message).values(
             session_id=session.id,
