@@ -191,10 +191,47 @@
   }
   .session-time {
     font-size: 12px;
-    color: var(--text-muted);
     flex-shrink: 0;
     min-width: 90px;
     text-align: right;
+    font-weight: 500;
+  }
+  .session-time.age-today { color: var(--green); }
+  .session-time.age-recent { color: var(--blue); }
+  .session-time.age-week { color: var(--orange); }
+  .session-time.age-old { color: var(--text-muted); }
+
+  /* Time filter pills */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .filter-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-right: 4px;
+  }
+  .filter-pill {
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .filter-pill:hover {
+    border-color: var(--accent-dim);
+    color: var(--text);
+  }
+  .filter-pill.active {
+    background: var(--accent-dim);
+    border-color: var(--accent-dim);
+    color: #fff;
   }
 
   /* Session detail modal */
@@ -467,6 +504,7 @@
   .scatter-svg .dot:hover {
     opacity: 1;
   }
+
 </style>
 </head>
 <body>
@@ -490,6 +528,13 @@
 <div class="content">
   <div id="heatmap" class="heatmap-container" style="display:none"></div>
   <div id="scatterplot" class="heatmap-container" style="display:none"></div>
+  <div id="filterBar" class="filter-bar" style="display:none">
+    <span class="filter-label">Show:</span>
+    <span class="filter-pill" data-days="1">24h</span>
+    <span class="filter-pill" data-days="3">3 days</span>
+    <span class="filter-pill active" data-days="7">Week</span>
+    <span class="filter-pill" data-days="0">All</span>
+  </div>
   <div id="loading" class="loading">Loading timeline</div>
   <div id="timeline"></div>
   <div id="searchResults" class="search-results"></div>
@@ -529,6 +574,20 @@ function timeAgo(dateStr) {
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
   return d.toLocaleDateString();
+}
+
+function ageClass(dateStr) {
+  if (!dateStr) return 'age-old';
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diff < 86400) return 'age-today';
+  if (diff < 86400 * 3) return 'age-recent';
+  if (diff < 86400 * 7) return 'age-week';
+  return 'age-old';
+}
+
+function ageDays(dateStr) {
+  if (!dateStr) return Infinity;
+  return (Date.now() - new Date(dateStr).getTime()) / 1000 / 86400;
 }
 
 function formatTime(dateStr) {
@@ -825,29 +884,56 @@ async function loadScatterPlot() {
   }
 }
 
-// --- Render timeline ---
-async function loadTimeline() {
-  const loadingEl = document.getElementById('loading');
+// --- Time filter ---
+let timelineData = null;
+
+function getFilterDays() {
+  const saved = localStorage.getItem('timeline_filter_days');
+  return saved !== null ? parseInt(saved) : 7;
+}
+
+function setFilterDays(days) {
+  localStorage.setItem('timeline_filter_days', days);
+}
+
+function initFilterBar() {
+  const bar = document.getElementById('filterBar');
+  const saved = getFilterDays();
+  bar.querySelectorAll('.filter-pill').forEach(pill => {
+    const d = parseInt(pill.dataset.days);
+    pill.classList.toggle('active', d === saved);
+    pill.addEventListener('click', () => {
+      bar.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      setFilterDays(d);
+      renderTimeline();
+    });
+  });
+}
+
+function renderTimeline() {
   const timelineEl = document.getElementById('timeline');
-  const emptyEl = document.getElementById('emptyState');
   const countEl = document.getElementById('machineCount');
+  const filterDays = getFilterDays();
 
-  try {
-    const resp = await fetch(`${API}/api/timeline`);
-    const data = await resp.json();
-    loadingEl.style.display = 'none';
+  if (!timelineData || !timelineData.length) return;
 
-    if (!data.length) {
-      emptyEl.style.display = 'block';
-      return;
+  let visibleSessions = 0;
+  const machineHtml = [];
+
+  for (const machine of timelineData) {
+    const projectsHtml = [];
+    for (const project of machine.projects) {
+      // Filter sessions by age
+      const filtered = filterDays === 0
+        ? project.sessions
+        : project.sessions.filter(s => ageDays(s.last_activity_at) <= filterDays);
+      if (!filtered.length) continue;
+      visibleSessions += filtered.length;
+      projectsHtml.push(renderProject({ ...project, sessions: filtered, session_count: filtered.length }));
     }
-
-    const totalSessions = data.reduce(
-      (sum, m) => sum + m.projects.reduce((s, p) => s + p.session_count, 0), 0
-    );
-    countEl.textContent = `${data.length} machine${data.length > 1 ? 's' : ''} · ${totalSessions} sessions`;
-
-    timelineEl.innerHTML = data.map(machine => `
+    if (!projectsHtml.length) continue;
+    machineHtml.push(`
       <div class="machine-group">
         <div class="machine-header">
           <div class="machine-dot ${isStale(machine.machine.last_seen_at) ? 'stale' : ''}"></div>
@@ -855,26 +941,55 @@ async function loadTimeline() {
           ${machine.machine.os ? `<span class="machine-os">${escapeHtml(machine.machine.os)}</span>` : ''}
           <span class="machine-seen">last seen ${timeAgo(machine.machine.last_seen_at)}</span>
         </div>
-        ${machine.projects.map(project => renderProject(project)).join('')}
+        ${projectsHtml.join('')}
       </div>
-    `).join('');
+    `);
+  }
 
-    // Attach toggle listeners
-    timelineEl.querySelectorAll('.project-header').forEach(el => {
-      el.addEventListener('click', () => {
-        const list = el.nextElementSibling;
-        const toggle = el.querySelector('.project-toggle');
-        list.classList.toggle('open');
-        toggle.classList.toggle('open');
-      });
-    });
+  const totalSessions = timelineData.reduce(
+    (sum, m) => sum + m.projects.reduce((s, p) => s + p.session_count, 0), 0
+  );
+  const filterLabel = filterDays === 0 ? '' : ` (${visibleSessions} shown)`;
+  countEl.textContent = `${timelineData.length} machine${timelineData.length > 1 ? 's' : ''} · ${totalSessions} sessions${filterLabel}`;
 
-    // Attach session click listeners
-    timelineEl.querySelectorAll('.session-row').forEach(el => {
-      el.addEventListener('click', () => {
-        openSession(parseInt(el.dataset.sessionId));
-      });
+  timelineEl.innerHTML = machineHtml.join('');
+
+  // Attach toggle listeners
+  timelineEl.querySelectorAll('.project-header').forEach(el => {
+    el.addEventListener('click', () => {
+      const list = el.nextElementSibling;
+      const toggle = el.querySelector('.project-toggle');
+      list.classList.toggle('open');
+      toggle.classList.toggle('open');
     });
+  });
+
+  // Attach session click listeners
+  timelineEl.querySelectorAll('.session-row').forEach(el => {
+    el.addEventListener('click', () => {
+      openSession(parseInt(el.dataset.sessionId));
+    });
+  });
+}
+
+// --- Render timeline ---
+async function loadTimeline() {
+  const loadingEl = document.getElementById('loading');
+  const emptyEl = document.getElementById('emptyState');
+  const filterBar = document.getElementById('filterBar');
+
+  try {
+    const resp = await fetch(`${API}/api/timeline`);
+    timelineData = await resp.json();
+    loadingEl.style.display = 'none';
+
+    if (!timelineData.length) {
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    filterBar.style.display = 'flex';
+    renderTimeline();
 
   } catch (err) {
     loadingEl.textContent = 'Failed to load timeline: ' + err.message;
@@ -896,7 +1011,7 @@ function renderProject(project) {
         <span class="project-path" title="${escapeHtml(project.original_path)}">${escapeHtml(project.original_path)}</span>
         <div class="project-meta">
           <span class="badge">${project.session_count} session${project.session_count !== 1 ? 's' : ''}</span>
-          <span class="badge">${timeAgo(project.last_activity_at)}</span>
+          <span class="badge ${ageClass(project.last_activity_at)}">${timeAgo(project.last_activity_at)}</span>
         </div>
       </div>
       <div class="sessions-list">
@@ -904,7 +1019,7 @@ function renderProject(project) {
           <div class="session-row" data-session-id="${s.id}">
             <span class="session-title">${s.title ? escapeHtml(truncate(s.title, 80)) : '<span class="untitled">Untitled session</span>'}</span>
             <span class="session-count">${s.message_count} turns</span>
-            <span class="session-time">${timeAgo(s.last_activity_at)}</span>
+            <span class="session-time ${ageClass(s.last_activity_at)}">${timeAgo(s.last_activity_at)}</span>
           </div>
         `).join('')}
       </div>
@@ -1167,6 +1282,7 @@ searchInput.addEventListener('input', () => {
 });
 
 // --- Init ---
+initFilterBar();
 loadHeatmap();
 loadScatterPlot();
 loadTimeline();
