@@ -906,7 +906,11 @@ function initFilterBar() {
       bar.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
       pill.classList.add('active');
       setFilterDays(d);
-      renderTimeline();
+      if (searchData) {
+        renderSearchResults();
+      } else {
+        renderTimeline();
+      }
     });
   });
 }
@@ -1218,6 +1222,7 @@ document.addEventListener('keydown', (e) => {
 
 // --- Search ---
 let searchTimeout;
+let searchData = null;
 const searchInput = document.getElementById('searchInput');
 const searchResults = document.getElementById('searchResults');
 const timelineEl2 = document.getElementById('timeline');
@@ -1225,10 +1230,40 @@ const timelineEl2 = document.getElementById('timeline');
 const heatmapEl = document.getElementById('heatmap');
 const scatterEl = document.getElementById('scatterplot');
 
+function renderSearchResults() {
+  if (!searchData) return;
+  const filterDays = getFilterDays();
+  const filtered = filterDays === 0
+    ? searchData
+    : searchData.filter(r => ageDays(r.last_activity_at) <= filterDays);
+
+  if (!filtered.length) {
+    searchResults.innerHTML = '<div class="empty">No results found</div>';
+    return;
+  }
+
+  searchResults.innerHTML = filtered.map(r => {
+    const snippetHtml = (r.snippets || []).slice(0, 3).map(s =>
+      `<div class="search-result-snippet">${s}</div>`
+    ).join('');
+    return `
+      <div class="search-result" onclick="openSession(${r.session_id})">
+        <div class="search-result-title">${escapeHtml(r.title || 'Untitled')}</div>
+        <div class="search-result-meta">
+          ${escapeHtml(r.machine_name)} · ${escapeHtml(r.project_name || r.project_path)} ·
+          ${r.message_count} messages · <span class="${ageClass(r.last_activity_at)}">${timeAgo(r.last_activity_at)}</span>
+        </div>
+        ${snippetHtml ? `<div class="search-result-snippets">${snippetHtml}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
 searchInput.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const q = searchInput.value.trim();
     if (!q) {
+      searchData = null;
       searchResults.classList.remove('active');
       searchResults.innerHTML = '';
       timelineEl2.style.display = 'block';
@@ -1238,32 +1273,12 @@ searchInput.addEventListener('keydown', async (e) => {
     }
     try {
       const resp = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
-      const results = await resp.json();
+      searchData = await resp.json();
       timelineEl2.style.display = 'none';
       heatmapEl.style.display = 'none';
       scatterEl.style.display = 'none';
       searchResults.classList.add('active');
-
-      if (!results.length) {
-        searchResults.innerHTML = '<div class="empty">No results found</div>';
-        return;
-      }
-
-      searchResults.innerHTML = results.map(r => {
-        const snippetHtml = (r.snippets || []).slice(0, 3).map(s =>
-          `<div class="search-result-snippet">${s}</div>`
-        ).join('');
-        return `
-          <div class="search-result" onclick="openSession(${r.session_id})">
-            <div class="search-result-title">${escapeHtml(r.title || 'Untitled')}</div>
-            <div class="search-result-meta">
-              ${escapeHtml(r.machine_name)} · ${escapeHtml(r.project_name || r.project_path)} ·
-              ${r.message_count} messages · ${timeAgo(r.last_activity_at)}
-            </div>
-            ${snippetHtml ? `<div class="search-result-snippets">${snippetHtml}</div>` : ''}
-          </div>
-        `;
-      }).join('');
+      renderSearchResults();
     } catch (err) {
       searchResults.innerHTML = `<div class="empty">Search failed: ${err.message}</div>`;
     }
@@ -1273,6 +1288,7 @@ searchInput.addEventListener('keydown', async (e) => {
 // Clear search when input is emptied
 searchInput.addEventListener('input', () => {
   if (!searchInput.value.trim()) {
+    searchData = null;
     searchResults.classList.remove('active');
     searchResults.innerHTML = '';
     timelineEl2.style.display = 'block';
